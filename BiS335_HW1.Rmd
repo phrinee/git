@@ -1,0 +1,368 @@
+---
+title: 'Homework 1 report'
+author: "20170361 Yourim Shin"
+output: 
+  pdf_document:
+    latex_engine: xelatex
+---
+## Import data
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r read}
+clinical<-readRDS("clinical.rds") 
+expression<-readRDS("expression.rds") 
+mutation<-readRDS("mutation.rds")
+
+library(dplyr)
+```
+
+## Preprocessing and normalization
+```{r preprocessing}
+sample_id_filter<-intersect(colnames(expression), 
+                            intersect(unique(mutation$sample_id),
+                                      clinical$sample_id[which(!is.na(clinical$subtype))])) 
+clinical_filter<-dplyr::filter(clinical,sample_id %in% sample_id_filter)
+mutation_filter<-dplyr::filter(mutation, sample_id %in% sample_id_filter) 
+expression_filter<-expression[,sample_id_filter]
+
+normalize<-function(x){
+  return((x-min(x))/(max(x)-min(x)))
+}
+
+library(preprocessCore) 
+
+tmp<-normalize.quantiles(expression_filter)
+rownames(tmp)<-rownames(expression_filter)
+colnames(tmp)<-colnames(expression_filter)
+
+expression_filter<-apply(expression_filter, 1, normalize) 
+expression_filter<-t(expression_filter) 
+expression_filter<-na.omit(expression_filter)
+
+#quantile_norm<-normalize.quantiles(expression_filter)
+```
+
+## Problem 1
+### 1-1
+```{r p1-1}
+# ANOVA : aov(survival_time(Y) ~ stage(X), data= data name)
+anova.result <- aov(survival_time~stage,data=clinical_filter)
+anova.result
+summary_ANOVA<-summary(anova.result)
+summary_ANOVA
+```
+Null hypothesis(H0) of anova test is that there are no differences the survival time among stages.
+
+Alternative hypothesis(HA) is that there are differences in survival time among stages.
+
+p value 0.00661 ** significantly small, thus we can reject the H0 and conclude HA.
+
+
+
+Then conduct posthoc analysis to see the difference of a pair of stages.
+```{r p1-2}
+#TurkeyHSD(aov_result, 'x(predictor variables)', conf.level(optional)= )
+posthoc <- TukeyHSD(x=anova.result, 'stage', conf.level=0.95)
+print(posthoc)
+```
+It's safe to say that survival time between (stage 1 and stage 2), (stage 1 and 3) shows meaningful differences based on small enough p-value of results of TukeyHSD function. 
+
+The confidence interval is about [43, 868] days difference for i and ii stages and [152, 1150] days difference for i and iii stages.
+
+### 1-2
+```{r p1111}
+#t. test(data1, data2, alternative= “two.sided” or “greater” or “less”)
+t.test(clinical_filter$survival_time[which(clinical_filter$stage=="stage i")],
+       clinical_filter$survival_time[which(clinical_filter$stage=="stage ii")],
+       alternative = "greater")
+```
+#### p-value = 0.00747 is significantly small. stage i patients survival time is greater than stage ii.
+#### The confidence interval is about [149.7479 , Inf]
+
+```{r rrr}
+t.test(clinical_filter$survival_time[which(clinical_filter$stage=="stage i")],
+       clinical_filter$survival_time[which(clinical_filter$stage=="stage iii")],
+       alternative = "greater")
+```
+#### p-value = 0.001406 is sufficiently small. stage i patients survival time is greater than stage iii.
+#### The confidence interval is about [296.552 , Inf]
+
+```{r rrrrr}
+t.test(clinical_filter$survival_time[which(clinical_filter$stage=="stage ii")],
+       clinical_filter$survival_time[which(clinical_filter$stage=="stage iii")],
+       alternative = "greater")
+```
+#### p-value = 0.1151 is not sufficiently small. stage ii patients survival time is not greater than stage iii.
+#### The confidence interval is about [ -73.25983 , Inf] which includes zero.
+
+### 1-3
+Draw a box plot to see the difference of survival time among the stages.
+
+```{r pressure, echo=FALSE}
+boxplot(survival_time~stage, data=clinical_filter)
+```
+
+### 1-4~5
+```{r rerer}
+anova.result <- aov(survival_time~subtype,data=clinical_filter)
+anova.result
+summary_ANOVA<-summary(anova.result)
+summary_ANOVA
+```
+Null hypothesis(H0) of anova test is that there are no differences the survival time among subtypes.
+
+Alternative hypothesis(HA) is that there are differences in survival time among subtypes.
+
+0.413 is not significantly small, thus we accept H0, posthoc analysis is not needed.
+```{r notneed}
+posthoc <- TukeyHSD(x=anova.result, 'subtype', conf.level=0.95)
+
+print(posthoc)
+```
+#### As we expected there's no significantly small p-values. 
+#### It's safe to say that different subtypes shows no differences in survival time 
+#### based on p-values of results of TukeyHSD function.
+
+### 1-6
+Draw a box plot to see the difference of survival time among the subtypes.
+
+```{r pdde, echo=FALSE}
+boxplot(survival_time~subtype, data=clinical_filter)
+```
+
+
+## Problem 2
+Calculate the number of genes that are differently expressed (DEGs) between group1 and group2.
+### answer : 1030
+```{r prob2}
+#upper quantile and lower quantile patients
+x<-quantile(clinical_filter$survival_time, 0.75)
+y<-quantile(clinical_filter$survival_time, 0.25)
+
+group1<-dplyr::filter(clinical_filter, survival_time >= x)
+group2<-dplyr::filter(clinical_filter, survival_time <= y)
+
+#conduct t test to investigate significant differences
+p_val<-c()
+for(i in 1:dim(expression_filter)[1]){
+  group1_expression<-expression_filter[i,as.character(group1$sample_id)]
+  group2_expression<-expression_filter[i,as.character(group2$sample_id)]
+  result<-t.test(group1_expression, group2_expression)
+  p_val<-c(p_val, result$p.value)}
+
+#Given a set of p-values, returns p-values adjusted using fdr methods
+adj_p_val<-p.adjust(p_val, 'fdr')
+genes<-rownames(expression_filter)
+
+#diffrently expressed genes (DEGs)
+genes_filter1<-genes[which(p_val<0.05)] # chr [1:3835]
+genes_filter2<-genes[which(adj_p_val<0.05)]# chr [1:1030] 
+
+#smaller range of genes obtained by adjusted p-values (3835 -> 1030)
+```
+
+## Problem 3
+Perform survival analysis, to see the difference in survival time depending on stages.
+
+
+We can conduct survival analysis by using R Function provided by R package “survival”.
+```{r rrerererewreq}
+library(survival)
+```
+survdiff(Surv(y, censoring_data)~x)
+
+
+```{r prob3}
+# Kaplan-Meier log-rank test about stage
+tt <- as.numeric(clinical_filter$survival_time)/30.5 # survival time in month
+
+delta <- 1*(clinical_filter$vital_status == 0) # censored data
+trt <- clinical_filter$stage # stage
+
+survdiff(Surv(tt, delta) ~ trt) # survival analysis depending on stages
+```
+H0 : There is No difference in survival time among stages
+
+HA : There Exists difference in survival time among stages
+
+With small enough value of p= 0.04, we can conclude HA.
+
+
+```{r plotttt}
+#Visualize the result of Kaplan-Meier log rank test
+
+plot(survfit(Surv(tt, delta) ~ trt), xlab = "Time in months", ylab = "Survival probability",
+     col = c("pink", "orange", "violet"), lwd = 2, main = "Survival in Breast Cancer (stage)")
+
+legend("topright", c("stage i", "stage ii", "stage iii"), col = c("pink", "orange", "violet"),
+       lty=rep(1,3), lwd=2)
+```
+
+
+Perform survival analysis, to see the difference in survival time depending on subtypes.
+
+```{r prob32222}
+# Kaplan-Meier log-rank test about subtypes
+tt <- as.numeric(clinical_filter$survival_time)/30.5 # survival time in month
+
+delta <- 1*(clinical_filter$vital_status == 0) # censored data
+trt <- clinical_filter$subtype # subtype
+
+survdiff(Surv(tt, delta) ~ trt) # survival analysis depending on stages
+
+```
+H0 : There is No difference in survival time among subtypes
+
+HA : There Exists difference in survival time among subtypes
+
+With not enough result p= 0.7 to decide HA, we can conclude H0.
+
+
+```{r plot44333}
+#Visualize the result of Kaplan-Meier log rank test
+
+plot(survfit(Surv(tt, delta) ~ trt), xlab = "Time in months", ylab = "Survival probability",
+     col = c("pink", "orange", "violet","red","grey"), lwd = 2, main = "Survival in Breast Cancer (subtype)")
+legend("topright", c("Basal-like", "HER2-enriched", "Luminal A", "Luminal B", "Normal-like"), col = c("pink", "orange", "violet","red","grey"),
+       lty=rep(1,3), lwd=2)
+```
+
+# Problem 4
+## Select the gene correlated with survival time
+## See the mutation of genes influencing patients' survival time
+
+# 4-1
+Analyze the genes in the scope of sifted genes from problem 2.
+
+Calculate pearson correlation coefficient for each genes.
+
+
+```{r prob4444}
+#Correlation test using cor.test function
+cor.estimate<-cor.pvalue<-c()
+for(i in 1:length(genes_filter2)){
+  expression<-expression_filter[genes_filter2[i],]
+  survival<-clinical_filter$survival_time[match(clinical_filter$sample_id, colnames(expression_filter))]
+  cor.result<-cor.test(expression, survival, method = 'pearson')
+  cor.estimate<-c(cor.estimate, cor.result$estimate)
+  cor.pvalue<-c(cor.pvalue, cor.result$p.value)}
+```
+H0 : there is no correlation between 2 variables(DEG, survival time)
+
+=> zero correlation coefficient 
+
+HA : there is correlation between 2 variables(DEG, survival time)
+
+=> non-zero correlation coefficient
+
+*cor.estimate* contains the whole coefficient values calculated from the test.
+
+# 4-2
+## Select the data that has p-value less than 0.05
+
+```{r rrrrrrrrrr}
+cor.estimate<-cor.estimate[which(cor.pvalue <= 0.05)]
+genes<-genes_filter2[which(cor.pvalue <= 0.05)]
+```
+
+The most positively correlated gene with survival time, the largest correlation coefficient.
+
+```{r rrrerwerwrew1qqq}
+gene<-genes[which(cor.estimate==max(cor.estimate))] # max(cor.estimate) = 0.1377636
+gene # "C1orf43"
+
+```
+Hence, the gene named "C1orf43" is the one most positively correlated with survival time.
+
+Its Pearson correlation coefficient is 0.1377636.
+
+
+# 4-3
+
+```{r remaining}
+
+#find the genes that has more than 0.5 Pearson correlation coefficient 
+#with the gene "C1orf43"
+#Using expression data
+
+#the gene "C1orf43"
+```
+
+```{r remaining222}
+match("C1orf43", rownames(expression_filter)) # 11928
+match("C1orf43", genes_filter2) # 719
+
+for(i in 1:length(genes_filter2)){
+  expression<-expression_filter[genes_filter2[i],]
+  clorf43<-expression_filter[genes_filter2[719],]
+  cor.result<-cor.test(expression, clorf43, method = 'pearson')
+  cor.estimate<-c(cor.estimate, cor.result$estimate)
+  cor.pvalue<-c(cor.pvalue, cor.result$p.value)}
+
+```
+H0 : there is *no* correlation between 2 variables(Gene C1orf43, another gene from gene_filter2)
+
+=> zero correlation coefficient 
+
+HA : there *is* correlation between expression of Gene C1orf43 and another gene from gene_filter2
+
+=> non-zero correlation coefficient
+
+*cor.estimate* contains the whole coefficient values calculated from the test.
+
+
+## Select the data that has p-value less than 0.05
+
+```{r rrrrrrrr2rr}
+cor.estimate<-cor.estimate[which(cor.pvalue <= 0.05)]
+genes<-genes_filter2[which(cor.pvalue <= 0.05)]
+```
+
+Extract the genes that has more than 0.5 Pearson correlation coefficient with the gene C1orf43,
+
+```{r rrrerwerwr22ew1qqq}
+gene<-genes[which(cor.estimate > 0.5)] 
+gene #"C1orf43"
+
+```
+Hence, the gene "C1orf43" itself is the only gene correlated with expression of itself as more than 0.5.
+
+Its Pearson correlation coefficient is 1.
+
+
+# Incomplete tasks...
+
+```{r remaininegegeg}
+#4-4
+#Let’s consider the patients who has mutation for the genes you selected in problem 4- (2),(3) 
+#as positive and the others as negative. 
+#Perform log rank test between the two groups.
+
+
+
+
+
+
+#4-5
+#Interpret result from 4-(4) with corresponding p-values 
+
+
+
+#Visualize Kaplan-Meier survival curve.
+
+
+```
+
+
+
+
+```{r four66666}
+#4-6
+#Which is more efficient to predict survival time 
+#among stage, subtype and mutation of genes 
+#that was selected in problem 4-(2),(3)?
+```
+# Above question could be answered by performance analysis
